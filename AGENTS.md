@@ -200,3 +200,18 @@ about the wrong code.
 An agent may merge its change when `soc show --wait` reports every
 check `ok` on the pushed head. The merge pushes `main` to the GitHub
 mirror, which is what `go install` reads.
+
+## Releases
+
+sockeye is origin and holds no tags. Its merge mirrors `main` to
+GitHub. croaky/laptop installs this command with
+`go install github.com/croaky/calc@main` on each run of `laptop.sh`, so
+a merge reaches the laptop on the next run with no other step.
+
+Do not publish a version tag. No module requires this command in
+`go.mod`, so a version names nothing that Go must resolve. A tag also
+changes `@latest`: Go resolves it to the highest tag, not to `main`, so
+one release with no tag leaves `@latest` on an old build. Docs name
+`@main`, never `@latest`.
+<https://dancroak.com/go/checks#my-commands> gives the rule for each
+kind of repo.

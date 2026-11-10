@@ -6,7 +6,7 @@ them with exact arithmetic.
 Install:
 
 ```bash
-go install github.com/croaky/calc@latest
+go install github.com/croaky/calc@main
 ```
 
 Start the REPL:
