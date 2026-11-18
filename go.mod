@@ -3,7 +3,7 @@ module github.com/croaky/calc
 go 1.27.3
 
 require (
-	github.com/croaky/is v0.2.0
+	github.com/croaky/is v0.2.2
 	github.com/peterh/liner v1.2.3
 )
 
