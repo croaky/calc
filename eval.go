@@ -9,6 +9,9 @@ import (
 	"go/token"
 	"math"
 	"strconv"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 const (
@@ -18,7 +21,46 @@ const (
 	// integer of any size, so chained shifts or repeated products grow
 	// without bound and exhaust CPU and memory.
 	maxBits = 10000
+	// maxErrorTokenRunes limits how many runes of input an error echoes.
+	maxErrorTokenRunes = 64
 )
+
+// sanitize replaces every non-printable rune or invalid UTF-8 byte in s
+// with a Go escape sequence, so terminal output stays on one line and
+// carries no control characters.
+func sanitize(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && size == 1 {
+			fmt.Fprintf(&b, "\\x%02x", s[i])
+			i++
+			continue
+		}
+		if unicode.IsPrint(r) {
+			b.WriteRune(r)
+		} else {
+			q := strconv.QuoteRune(r)
+			b.WriteString(q[1 : len(q)-1])
+		}
+		i += size
+	}
+	return b.String()
+}
+
+// safeToken caps s at maxErrorTokenRunes runes and escapes non-printable
+// runes for error messages that echo input.
+func safeToken(s string) string {
+	n := 0
+	for i := range s {
+		if n == maxErrorTokenRunes {
+			return sanitize(s[:i]) + "..."
+		}
+		n++
+	}
+	return sanitize(s)
+}
 
 func checkInt(v constant.Value) (constant.Value, error) {
 	if v.Kind() == constant.Int && constant.BitLen(v) > maxBits {
@@ -46,12 +88,12 @@ func evalExpr(e ast.Expr, prev constant.Value) (constant.Value, error) {
 	switch e := e.(type) {
 	case *ast.BasicLit:
 		if e.Kind != token.INT && e.Kind != token.FLOAT {
-			return nil, fmt.Errorf("%s is not a number", e.Value)
+			return nil, fmt.Errorf("%s is not a number", safeToken(e.Value))
 		}
 		return checkInt(constant.MakeFromLiteral(e.Value, e.Kind, 0))
 	case *ast.Ident:
 		if e.Name != "_" {
-			return nil, fmt.Errorf("unknown name %s", e.Name)
+			return nil, fmt.Errorf("unknown name %s", safeToken(e.Name))
 		}
 		if prev == nil {
 			return nil, errors.New("_ has no value yet")

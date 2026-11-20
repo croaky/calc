@@ -65,6 +65,12 @@ func TestEvalErrors(t *testing.T) {
 		{"x + 1", "unknown name x"},
 		{"_ + 1", "_ has no value yet"},
 		{"'a'", "'a' is not a number"},
+		{"\"\x1b[31mhi\x07\"", "\"\\x1b[31mhi\\a\" is not a number"},
+		{"'\x1b'", "'\\x1b' is not a number"},
+		{"`a\nb`", "`a\\nb` is not a number"},
+		{"\"a\rb\"", "\"a\\rb\" is not a number"},
+		{"\"\u202ehi\"", "\"\\u202ehi\" is not a number"},
+		{"\"" + strings.Repeat("a", 80) + "\"", "\"" + strings.Repeat("a", 63) + "... is not a number"},
 		{"1 == 1", "unsupported operator =="},
 		{"f(1)", "unsupported expression"},
 		{"2 +", "syntax error"},
@@ -102,4 +108,20 @@ func TestRunIntegerLimit(t *testing.T) {
 	is.Eq(len(lines), 3)
 	is.Eq(lines[1], "error: integer exceeds 10000 bits")
 	is.Eq(lines[2], "1")
+}
+
+func TestRunSanitizesErrors(t *testing.T) {
+	is := is.New(t)
+	in := "\"\x1b[2J\rhi\"\n'\x1b'\n\"\u202efake\"\n"
+	var out strings.Builder
+	is.NoErr(run(strings.NewReader(in), &out))
+	got := out.String()
+	is.Eq(strings.Contains(got, "\x1b"), false)
+	is.Eq(strings.Contains(got, "\r"), false)
+	is.Eq(strings.Contains(got, "\u202e"), false)
+	lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
+	is.Eq(len(lines), 3)
+	is.Eq(lines[0], `error: "\x1b[2J\rhi" is not a number`)
+	is.Eq(lines[1], `error: '\x1b' is not a number`)
+	is.Eq(lines[2], `error: "\u202efake" is not a number`)
 }

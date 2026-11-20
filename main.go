@@ -28,7 +28,7 @@ func main() {
 	if len(os.Args) > 1 {
 		v, err := eval(strings.Join(os.Args[1:], " "), nil)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(os.Stderr, sanitize(err.Error()))
 			os.Exit(1)
 		}
 		fmt.Println(format(v))
@@ -150,7 +150,7 @@ func step(line string, prev constant.Value) (string, constant.Value, bool) {
 	}
 	v, err := eval(line, prev)
 	if err != nil {
-		return "error: " + err.Error(), nil, false
+		return "error: " + sanitize(err.Error()), nil, false
 	}
 	return format(v), v, false
 }
