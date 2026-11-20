@@ -11,10 +11,21 @@ import (
 	"strconv"
 )
 
-// maxShift limits the count of a shift. go/constant holds an integer
-// of any size, so a typo such as 1 << 1e9 builds a value of a billion
-// bits and holds the prompt for minutes.
-const maxShift = 10000
+const (
+	// maxShift limits the count of a shift.
+	maxShift = 10000
+	// maxBits limits the bit length of an integer. go/constant holds an
+	// integer of any size, so chained shifts or repeated products grow
+	// without bound and exhaust CPU and memory.
+	maxBits = 10000
+)
+
+func checkInt(v constant.Value) (constant.Value, error) {
+	if v.Kind() == constant.Int && constant.BitLen(v) > maxBits {
+		return nil, fmt.Errorf("integer exceeds %d bits", maxBits)
+	}
+	return v, nil
+}
 
 // eval parses line as a Go expression and computes it with exact
 // arithmetic. The identifier _ reads prev, the result of the line
@@ -37,7 +48,7 @@ func evalExpr(e ast.Expr, prev constant.Value) (constant.Value, error) {
 		if e.Kind != token.INT && e.Kind != token.FLOAT {
 			return nil, fmt.Errorf("%s is not a number", e.Value)
 		}
-		return constant.MakeFromLiteral(e.Value, e.Kind, 0), nil
+		return checkInt(constant.MakeFromLiteral(e.Value, e.Kind, 0))
 	case *ast.Ident:
 		if e.Name != "_" {
 			return nil, fmt.Errorf("unknown name %s", e.Name)
@@ -45,7 +56,7 @@ func evalExpr(e ast.Expr, prev constant.Value) (constant.Value, error) {
 		if prev == nil {
 			return nil, errors.New("_ has no value yet")
 		}
-		return prev, nil
+		return checkInt(prev)
 	case *ast.ParenExpr:
 		return evalExpr(e.X, prev)
 	case *ast.UnaryExpr:
@@ -71,12 +82,12 @@ func evalExpr(e ast.Expr, prev constant.Value) (constant.Value, error) {
 func unary(op token.Token, x constant.Value) (constant.Value, error) {
 	switch op {
 	case token.ADD, token.SUB:
-		return constant.UnaryOp(op, x, 0), nil
+		return checkInt(constant.UnaryOp(op, x, 0))
 	case token.XOR:
 		if x.Kind() != constant.Int {
 			return nil, errors.New("^ needs an integer")
 		}
-		return constant.UnaryOp(op, x, 0), nil
+		return checkInt(constant.UnaryOp(op, x, 0))
 	}
 	return nil, fmt.Errorf("unsupported operator %s", op)
 }
@@ -85,7 +96,12 @@ func binary(op token.Token, x, y constant.Value) (constant.Value, error) {
 	ints := x.Kind() == constant.Int && y.Kind() == constant.Int
 	switch op {
 	case token.ADD, token.SUB, token.MUL:
-		return constant.BinaryOp(x, op, y), nil
+		if op == token.MUL && ints && constant.Sign(x) != 0 && constant.Sign(y) != 0 {
+			if constant.BitLen(x)+constant.BitLen(y)-1 > maxBits {
+				return nil, fmt.Errorf("integer exceeds %d bits", maxBits)
+			}
+		}
+		return checkInt(constant.BinaryOp(x, op, y))
 	case token.QUO:
 		if constant.Sign(y) == 0 {
 			return nil, errors.New("division by zero")
@@ -93,7 +109,7 @@ func binary(op token.Token, x, y constant.Value) (constant.Value, error) {
 		// BinaryOp gives the exact quotient for token.QUO, also for
 		// two integers. token.QUO_ASSIGN is what asks for Go's
 		// truncated integer division.
-		return constant.BinaryOp(x, op, y), nil
+		return checkInt(constant.BinaryOp(x, op, y))
 	case token.REM:
 		if !ints {
 			return nil, errors.New("% needs integers")
@@ -101,12 +117,12 @@ func binary(op token.Token, x, y constant.Value) (constant.Value, error) {
 		if constant.Sign(y) == 0 {
 			return nil, errors.New("division by zero")
 		}
-		return constant.BinaryOp(x, op, y), nil
+		return checkInt(constant.BinaryOp(x, op, y))
 	case token.AND, token.OR, token.XOR, token.AND_NOT:
 		if !ints {
 			return nil, fmt.Errorf("%s needs integers", op)
 		}
-		return constant.BinaryOp(x, op, y), nil
+		return checkInt(constant.BinaryOp(x, op, y))
 	case token.SHL, token.SHR:
 		if !ints {
 			return nil, fmt.Errorf("%s needs integers", op)
@@ -115,7 +131,10 @@ func binary(op token.Token, x, y constant.Value) (constant.Value, error) {
 		if !ok || n > maxShift {
 			return nil, fmt.Errorf("shift count must be 0 to %d", maxShift)
 		}
-		return constant.Shift(x, op, uint(n)), nil
+		if op == token.SHL && constant.Sign(x) != 0 && uint64(constant.BitLen(x))+n > maxBits {
+			return nil, fmt.Errorf("integer exceeds %d bits", maxBits)
+		}
+		return checkInt(constant.Shift(x, op, uint(n)))
 	}
 	return nil, fmt.Errorf("unsupported operator %s", op)
 }

@@ -58,6 +58,10 @@ func TestEvalErrors(t *testing.T) {
 		{"1.5 & 1", "& needs integers"},
 		{"1 << 100000", "shift count must be 0 to 10000"},
 		{"1 << -1", "shift count must be 0 to 10000"},
+		{"(1 << 6000) << 5000", "integer exceeds 10000 bits"},
+		{"(1 << 6000) * (1 << 5000)", "integer exceeds 10000 bits"},
+		{"(1 << 9999) + (1 << 9999)", "integer exceeds 10000 bits"},
+		{strings.Repeat("9", 3100), "integer exceeds 10000 bits"},
 		{"x + 1", "unknown name x"},
 		{"_ + 1", "_ has no value yet"},
 		{"'a'", "'a' is not a number"},
@@ -87,4 +91,15 @@ func TestRun(t *testing.T) {
 	is.NoErr(run(strings.NewReader(in), &out))
 	// An error leaves _ as it was, and nothing after quit runs.
 	is.Eq(out.String(), "4\n40\nerror: division by zero\n41\n")
+}
+
+func TestRunIntegerLimit(t *testing.T) {
+	is := is.New(t)
+	in := "1 << 5000\n_ * _\n_ >> 5000\n"
+	var out strings.Builder
+	is.NoErr(run(strings.NewReader(in), &out))
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	is.Eq(len(lines), 3)
+	is.Eq(lines[1], "error: integer exceeds 10000 bits")
+	is.Eq(lines[2], "1")
 }
