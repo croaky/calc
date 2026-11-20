@@ -8,6 +8,7 @@ import (
 	"go/parser"
 	"go/token"
 	"math"
+	"math/big"
 	"strconv"
 	"strings"
 	"unicode"
@@ -17,9 +18,11 @@ import (
 const (
 	// maxShift limits the count of a shift.
 	maxShift = 10000
-	// maxBits limits the bit length of an integer. go/constant holds an
-	// integer of any size, so chained shifts or repeated products grow
-	// without bound and exhaust CPU and memory.
+	// maxBits limits integer bit length, float binary exponent, and
+	// rational numerator or denominator bit length. go/constant holds
+	// numbers of any size, so chained shifts, repeated products, or
+	// huge-exponent float additions grow without bound and exhaust CPU
+	// and memory.
 	maxBits = 10000
 	// maxErrorTokenRunes limits how many runes of input an error echoes.
 	maxErrorTokenRunes = 64
@@ -62,9 +65,26 @@ func safeToken(s string) string {
 	return sanitize(s)
 }
 
-func checkInt(v constant.Value) (constant.Value, error) {
-	if v.Kind() == constant.Int && constant.BitLen(v) > maxBits {
-		return nil, fmt.Errorf("integer exceeds %d bits", maxBits)
+func checkValue(v constant.Value) (constant.Value, error) {
+	switch v.Kind() {
+	case constant.Unknown:
+		return nil, errors.New("number overflow")
+	case constant.Int:
+		if constant.BitLen(v) > maxBits {
+			return nil, fmt.Errorf("integer exceeds %d bits", maxBits)
+		}
+	case constant.Float:
+		switch x := constant.Val(v).(type) {
+		case *big.Float:
+			exp := x.MantExp(nil)
+			if x.IsInf() || exp > maxBits || exp < -maxBits {
+				return nil, fmt.Errorf("float exceeds %d bits", maxBits)
+			}
+		case *big.Rat:
+			if x.Num().BitLen() > maxBits || x.Denom().BitLen() > maxBits {
+				return nil, fmt.Errorf("float exceeds %d bits", maxBits)
+			}
+		}
 	}
 	return v, nil
 }
@@ -90,7 +110,7 @@ func evalExpr(e ast.Expr, prev constant.Value) (constant.Value, error) {
 		if e.Kind != token.INT && e.Kind != token.FLOAT {
 			return nil, fmt.Errorf("%s is not a number", safeToken(e.Value))
 		}
-		return checkInt(constant.MakeFromLiteral(e.Value, e.Kind, 0))
+		return checkValue(constant.MakeFromLiteral(e.Value, e.Kind, 0))
 	case *ast.Ident:
 		if e.Name != "_" {
 			return nil, fmt.Errorf("unknown name %s", safeToken(e.Name))
@@ -98,7 +118,7 @@ func evalExpr(e ast.Expr, prev constant.Value) (constant.Value, error) {
 		if prev == nil {
 			return nil, errors.New("_ has no value yet")
 		}
-		return checkInt(prev)
+		return checkValue(prev)
 	case *ast.ParenExpr:
 		return evalExpr(e.X, prev)
 	case *ast.UnaryExpr:
@@ -124,12 +144,12 @@ func evalExpr(e ast.Expr, prev constant.Value) (constant.Value, error) {
 func unary(op token.Token, x constant.Value) (constant.Value, error) {
 	switch op {
 	case token.ADD, token.SUB:
-		return checkInt(constant.UnaryOp(op, x, 0))
+		return checkValue(constant.UnaryOp(op, x, 0))
 	case token.XOR:
 		if x.Kind() != constant.Int {
 			return nil, errors.New("^ needs an integer")
 		}
-		return checkInt(constant.UnaryOp(op, x, 0))
+		return checkValue(constant.UnaryOp(op, x, 0))
 	}
 	return nil, fmt.Errorf("unsupported operator %s", op)
 }
@@ -143,7 +163,7 @@ func binary(op token.Token, x, y constant.Value) (constant.Value, error) {
 				return nil, fmt.Errorf("integer exceeds %d bits", maxBits)
 			}
 		}
-		return checkInt(constant.BinaryOp(x, op, y))
+		return checkValue(constant.BinaryOp(x, op, y))
 	case token.QUO:
 		if constant.Sign(y) == 0 {
 			return nil, errors.New("division by zero")
@@ -151,7 +171,7 @@ func binary(op token.Token, x, y constant.Value) (constant.Value, error) {
 		// BinaryOp gives the exact quotient for token.QUO, also for
 		// two integers. token.QUO_ASSIGN is what asks for Go's
 		// truncated integer division.
-		return checkInt(constant.BinaryOp(x, op, y))
+		return checkValue(constant.BinaryOp(x, op, y))
 	case token.REM:
 		if !ints {
 			return nil, errors.New("% needs integers")
@@ -159,12 +179,12 @@ func binary(op token.Token, x, y constant.Value) (constant.Value, error) {
 		if constant.Sign(y) == 0 {
 			return nil, errors.New("division by zero")
 		}
-		return checkInt(constant.BinaryOp(x, op, y))
+		return checkValue(constant.BinaryOp(x, op, y))
 	case token.AND, token.OR, token.XOR, token.AND_NOT:
 		if !ints {
 			return nil, fmt.Errorf("%s needs integers", op)
 		}
-		return checkInt(constant.BinaryOp(x, op, y))
+		return checkValue(constant.BinaryOp(x, op, y))
 	case token.SHL, token.SHR:
 		if !ints {
 			return nil, fmt.Errorf("%s needs integers", op)
@@ -176,7 +196,7 @@ func binary(op token.Token, x, y constant.Value) (constant.Value, error) {
 		if op == token.SHL && constant.Sign(x) != 0 && uint64(constant.BitLen(x))+n > maxBits {
 			return nil, fmt.Errorf("integer exceeds %d bits", maxBits)
 		}
-		return checkInt(constant.Shift(x, op, uint(n)))
+		return checkValue(constant.Shift(x, op, uint(n)))
 	}
 	return nil, fmt.Errorf("unsupported operator %s", op)
 }

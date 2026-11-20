@@ -62,6 +62,12 @@ func TestEvalErrors(t *testing.T) {
 		{"(1 << 6000) * (1 << 5000)", "integer exceeds 10000 bits"},
 		{"(1 << 9999) + (1 << 9999)", "integer exceeds 10000 bits"},
 		{strings.Repeat("9", 3100), "integer exceeds 10000 bits"},
+		{"1e10000", "float exceeds 10000 bits"},
+		{"1e-10000", "float exceeds 10000 bits"},
+		{"0x1p500000000 + 1", "float exceeds 10000 bits"},
+		{"1e1000000000", "number overflow"},
+		{"0x1p6000 * 0x1p6000", "float exceeds 10000 bits"},
+		{"0x1p6000 / 0x1p-6000", "float exceeds 10000 bits"},
 		{"x + 1", "unknown name x"},
 		{"_ + 1", "_ has no value yet"},
 		{"'a'", "'a' is not a number"},
@@ -107,6 +113,18 @@ func TestRunIntegerLimit(t *testing.T) {
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
 	is.Eq(len(lines), 3)
 	is.Eq(lines[1], "error: integer exceeds 10000 bits")
+	is.Eq(lines[2], "1")
+}
+
+func TestRunFloatLimit(t *testing.T) {
+	is := is.New(t)
+	in := "0x1p6000\n_ * _\n_ / 0x1p6000\n"
+	var out strings.Builder
+	is.NoErr(run(strings.NewReader(in), &out))
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	is.Eq(len(lines), 3)
+	is.Eq(lines[0], "overflow")
+	is.Eq(lines[1], "error: float exceeds 10000 bits")
 	is.Eq(lines[2], "1")
 }
 
